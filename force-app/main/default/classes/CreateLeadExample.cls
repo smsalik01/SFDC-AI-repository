@@ -1,14 +1,14 @@
-@IsTest
+
 public class CreateLeadExample {
 
     public void createLeadRecord() {
 
         // Create a new Lead sObject
         Lead newLead = new Lead(
-            FirstName = 'Phil6',
-            LastName  = 'Kurt6',
-            Company   = 'Kurt6 Industries',
-            Email     = 'Kurt6.sh@abc.com',
+            FirstName = 'Phil7',
+            LastName  = 'Kurt7',
+            Company   = 'Kurt7 Industries',
+            Email     = 'Kurt7.sh@abc.com',
             Phone     = '123-124-5555',
             Status    = 'Open - Not Contacted'
         );
