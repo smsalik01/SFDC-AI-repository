@@ -73,7 +73,7 @@ jobs:
             print("String recordName = 'CommitClass';")
             print('Map<String,SObjectType> gd = Schema.getGlobalDescribe();')
             print('SObjectType targetType = gd.get(objectApi);')
-            print('if (targetType == null) { throw new Exception(\'Custom object ' + objectApi + ' not found\'); }')
+            print("if (targetType == null) { throw new Exception('Custom object ' + objectApi + ' not found'); }")
             print('String query = \'SELECT Id FROM \' + objectApi + \' WHERE Name = \\\'CommitClass\\\' LIMIT 1\';')
             print('List<SObject> records = Database.query(query);')
             print('SObject record;')
@@ -89,7 +89,7 @@ jobs:
             print('  record.put(messageField, commitMessage);')
             print('  update record;')
             print('}')
-PY
+          PY
           sf apex execute --apexcodefile update_commitclass.apex
 
       - name: Deploy to Salesforce
