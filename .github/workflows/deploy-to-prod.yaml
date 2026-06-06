@@ -1,16 +1,13 @@
 ﻿name: Deploy to Salesforce (Prod)
-
 on:
   push:
     branches:
       - main
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -36,15 +33,43 @@ jobs:
           echo "$COMMIT_MESSAGE" >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
 
-      - name: Install Salesforce CLI
+      - name: Capture changed Apex classes
+        id: capture_classes
+        shell: bash
         run: |
-          npm install --global @salesforce/cli
+          COMMIT_RANGE="${{ github.event.before }}..${{ github.sha }}"
+          if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            COMMIT_RANGE="${{ github.sha }}"
+          fi
+
+          # List all .cls files touched in this push (added, modified, renamed)
+          CHANGED_FILES="$(git diff --name-only --diff-filter=AMR "$COMMIT_RANGE" \
+            -- 'force-app/main/default/classes/*.cls' 2>/dev/null || true)"
+
+          # Build a JSON array: [{"name":"MyClass","path":"force-app/.../MyClass.cls"}, ...]
+          JSON="["
+          FIRST=true
+          while IFS= read -r FILE; do
+            [ -z "$FILE" ] && continue
+            CLASS_NAME="$(basename "$FILE" .cls)"
+            SAFE_FILE="$(echo "$FILE" | sed 's/"/\\"/g')"
+            SAFE_NAME="$(echo "$CLASS_NAME" | sed 's/"/\\"/g')"
+            if [ "$FIRST" = true ]; then FIRST=false; else JSON+=","; fi
+            JSON+="{\"name\":\"$SAFE_NAME\",\"path\":\"$SAFE_FILE\"}"
+          done <<< "$CHANGED_FILES"
+          JSON+="]"
+
+          echo "changed_classes=$JSON" >> "$GITHUB_OUTPUT"
+          echo "Detected classes: $JSON"
+
+      - name: Install Salesforce CLI
+        run: npm install --global @salesforce/cli
 
       - name: Create JWT key file
-        run: |
-          echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+        run: echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
 
       - name: Authenticate to Salesforce (JWT)
+        id: sf_auth
         run: |
           sf org login jwt \
             --client-id ${{ secrets.CONSUMER_KEY }} \
@@ -53,6 +78,13 @@ jobs:
             --instance-url ${{ secrets.INSTANCE_URL }} \
             --set-default
 
+          # Capture the access token and instance URL for REST API calls later
+          SF_ACCESS_TOKEN="$(sf org display --json | jq -r '.result.accessToken')"
+          SF_INSTANCE_URL="$(sf org display --json | jq -r '.result.instanceUrl')"
+          echo "::add-mask::$SF_ACCESS_TOKEN"
+          echo "sf_access_token=$SF_ACCESS_TOKEN" >> "$GITHUB_OUTPUT"
+          echo "sf_instance_url=$SF_INSTANCE_URL"  >> "$GITHUB_OUTPUT"
+
       - name: Deploy to Salesforce
         run: |
           echo "Apex class commit message:"
@@ -60,3 +92,71 @@ jobs:
           sf project deploy start \
             --target-org ${{ secrets.DEPLOYMENT_USER_NAME }} \
             --ignore-conflicts
+
+      - name: Create CommitClass__c records in Salesforce
+        shell: bash
+        env:
+          SF_ACCESS_TOKEN: ${{ steps.sf_auth.outputs.sf_access_token }}
+          SF_INSTANCE_URL: ${{ steps.sf_auth.outputs.sf_instance_url }}
+          COMMIT_MESSAGE: ${{ steps.capture_commit_message.outputs.commit_message }}
+          COMMIT_HASH: ${{ github.sha }}
+          CHANGED_CLASSES: ${{ steps.capture_classes.outputs.changed_classes }}
+        run: |
+          CLASS_COUNT="$(echo "$CHANGED_CLASSES" | jq 'length')"
+          if [ "$CLASS_COUNT" -eq 0 ]; then
+            echo "No Apex classes changed — skipping CommitClass__c upsert."
+            exit 0
+          fi
+
+          echo "Upserting $CLASS_COUNT CommitClass__c record(s)..."
+
+          for i in $(seq 0 $((CLASS_COUNT - 1))); do
+            CLASS_NAME="$(echo "$CHANGED_CLASSES" | jq -r ".[$i].name")"
+            FILE_PATH="$(echo "$CHANGED_CLASSES"  | jq -r ".[$i].path")"
+
+            # Build JSON payload for the record
+            PAYLOAD="$(jq -n \
+              --arg name   "$CLASS_NAME" \
+              --arg cls    "$CLASS_NAME" \
+              --arg path   "$FILE_PATH" \
+              --arg msg    "$COMMIT_MESSAGE" \
+              --arg hash   "$COMMIT_HASH" \
+              '{
+                Name:                    $name,
+                Class_Name__c:           $cls,
+                File_Path__c:            $path,
+                Last_Commit_Message__c:  $msg,
+                Commit_Hash__c:          $hash
+              }'
+            )"
+
+            # Upsert on Commit_Hash__c + Class_Name__c — falls back to POST (insert)
+            # Using external-id upsert via Commit_Hash__c is not unique per class,
+            # so we do a query-then-patch/post pattern instead.
+            ENCODED_CLASS="$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))" "$CLASS_NAME")"
+            ENCODED_HASH="$(python3  -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))" "$COMMIT_HASH")"
+
+            QUERY="SELECT+Id+FROM+CommitClass__c+WHERE+Class_Name__c='${ENCODED_CLASS}'+AND+Commit_Hash__c='${ENCODED_HASH}'+LIMIT+1"
+            EXISTING="$(curl -sf \
+              -H "Authorization: Bearer $SF_ACCESS_TOKEN" \
+              "$SF_INSTANCE_URL/services/data/v62.0/query/?q=$QUERY" \
+              | jq -r '.records[0].Id // empty')"
+
+            if [ -n "$EXISTING" ]; then
+              echo "  PATCH existing record $EXISTING for $CLASS_NAME"
+              curl -sf -X PATCH \
+                -H "Authorization: Bearer $SF_ACCESS_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "$PAYLOAD" \
+                "$SF_INSTANCE_URL/services/data/v62.0/sobjects/CommitClass__c/$EXISTING"
+            else
+              echo "  POST new record for $CLASS_NAME"
+              curl -sf -X POST \
+                -H "Authorization: Bearer $SF_ACCESS_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "$PAYLOAD" \
+                "$SF_INSTANCE_URL/services/data/v62.0/sobjects/CommitClass__c"
+            fi
+          done
+
+          echo "Done — all CommitClass__c records upserted."
