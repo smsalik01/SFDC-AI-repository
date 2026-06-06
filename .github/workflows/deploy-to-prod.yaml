@@ -15,7 +15,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Capture last Apex class commit message
+      - name: Capture last Apex class commit message and class names
         id: capture_commit_message
         shell: bash
         run: |
@@ -24,12 +24,19 @@ jobs:
             COMMIT_RANGE="${{ github.sha }}"
           fi
           echo "Scanning commit range: ${COMMIT_RANGE}"
-          COMMIT_MESSAGE="$(git log -1 --pretty=%B "$COMMIT_RANGE" -- force-app/main/default/classes 2>/dev/null | tr -d '\r')"
-          if [ -z "$COMMIT_MESSAGE" ]; then
+          COMMIT_SHA="$(git log -1 --format=%H "$COMMIT_RANGE" -- force-app/main/default/classes 2>/dev/null)"
+          if [ -n "$COMMIT_SHA" ]; then
+            COMMIT_MESSAGE="$(git log -1 --pretty=%B "$COMMIT_SHA" | tr -d '\r')"
+            CLASS_NAMES="$(git diff-tree --no-commit-id --name-only -r "$COMMIT_SHA" | grep '^force-app/main/default/classes/.*\.cls$' | sed 's#^force-app/main/default/classes/##' | sed 's#\.cls$##' | sort -u | tr '\n' ' ' | sed 's/ $//')"
+          else
             COMMIT_MESSAGE="No Apex class commit found in ${COMMIT_RANGE}"
+            CLASS_NAMES=""
           fi
           echo "commit_message<<EOF" >> "$GITHUB_OUTPUT"
           echo "$COMMIT_MESSAGE" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          echo "class_names<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$CLASS_NAMES" >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Install Salesforce CLI
@@ -49,10 +56,48 @@ jobs:
             --instance-url ${{ secrets.INSTANCE_URL }} \
             --set-default
 
+      - name: Update CommitClass record in Salesforce
+        shell: bash
+        run: |
+          COMMIT_MESSAGE="${{ steps.capture_commit_message.outputs.commit_message }}"
+          CLASS_NAMES="${{ steps.capture_commit_message.outputs.class_names }}"
+          python3 - <<'PY' > update_commitclass.apex
+import os, json
+commit_message = json.dumps(os.getenv('COMMIT_MESSAGE', ''))
+class_names = json.dumps(os.getenv('CLASS_NAMES', ''))
+print(f"String commitMessage = {commit_message};")
+print(f"String classNames = {class_names};")
+print("String objectApi = 'CommitClass__c';")
+print("String nameField = 'Class_Name__c';")
+print("String messageField = 'Last_Commit_Message__c';")
+print("String recordName = 'CommitClass';")
+print('Map<String,SObjectType> gd = Schema.getGlobalDescribe();')
+print('SObjectType targetType = gd.get(objectApi);')
+print('if (targetType == null) { throw new Exception(\'Custom object ' + objectApi + ' not found\'); }')
+print('String query = \'SELECT Id FROM \' + objectApi + \' WHERE Name = \\\'\' + recordName + \'\\\' LIMIT 1\';')
+print('List<SObject> records = Database.query(query);')
+print('SObject record;')
+print('if (records.isEmpty()) {')
+print('  record = targetType.newSObject();')
+print('  record.put(\'Name\', recordName);')
+print('  record.put(nameField, classNames);')
+print('  record.put(messageField, commitMessage);')
+print('  insert record;')
+print('} else {')
+print('  record = records[0];')
+print('  record.put(nameField, classNames);')
+print('  record.put(messageField, commitMessage);')
+print('  update record;')
+print('}')
+PY
+          sf apex execute --apexcodefile update_commitclass.apex
+
       - name: Deploy to Salesforce
         run: |
           echo "Apex class commit message:"
           echo "${{ steps.capture_commit_message.outputs.commit_message }}"
+          echo "Apex class names:"
+          echo "${{ steps.capture_commit_message.outputs.class_names }}"
           sf project deploy start \
             --target-org ${{ secrets.DEPLOYMENT_USER_NAME }} \
             --ignore-conflicts
