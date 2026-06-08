@@ -1,23 +1,20 @@
 ﻿name: Deploy to Salesforce (Prod)
-
 on:
   push:
     branches:
       - main
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Capture last Apex class commit message and class names
+      - name: Capture last Apex class commit message
         id: capture_commit_message
         shell: bash
         run: |
@@ -25,49 +22,23 @@ jobs:
           if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
             COMMIT_RANGE="${{ github.sha }}"
           fi
-
-          COMMIT_SHA="$(git log -1 --format=%H "$COMMIT_RANGE" -- force-app/main/default/classes 2>/dev/null || true)"
+          echo "Scanning commit range: ${COMMIT_RANGE}"
+          COMMIT_SHA="$(git log -1 --format=%H "$COMMIT_RANGE" -- force-app/main/default/classes 2>/dev/null)"
           if [ -n "$COMMIT_SHA" ]; then
             COMMIT_MESSAGE="$(git log -1 --pretty=%B "$COMMIT_SHA" | tr -d '\r')"
-            CLASS_NAMES="$(git diff-tree --no-commit-id --name-only -r "$COMMIT_SHA" | grep '^force-app/main/default/classes/.*\.cls$' | sed 's#^force-app/main/default/classes/##' | sed 's#\.cls$##' | sort -u | tr '\n' ' ' | sed 's/ $//')"
           else
             COMMIT_MESSAGE="No Apex class commit found in ${COMMIT_RANGE}"
-            CLASS_NAMES=""
           fi
-
           echo "commit_message<<EOF" >> "$GITHUB_OUTPUT"
           echo "$COMMIT_MESSAGE" >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
-          echo "class_names<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$CLASS_NAMES" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Install Salesforce CLI
-        run: |
-          npm install --global @salesforce/cli
+        run: npm install --global @salesforce/cli
 
       - name: Create JWT key file
-        run: |
-          echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+        run: echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
 
-      - name: Authenticate to Salesforce (JWT)
-        run: |
-          sf org login jwt \
-            --client-id "${{ secrets.CONSUMER_KEY }}" \
-            --jwt-key-file server.key \
-            --username "${{ secrets.DEPLOYMENT_USER_NAME }}" \
-            --instance-url "${{ secrets.INSTANCE_URL }}" \
-            --set-default
-
-      - name: Deploy to Salesforce
-        run: |
-          echo "Apex class commit message:"
-          echo "${{ steps.capture_commit_message.outputs.commit_message }}"
-          echo "Apex class names:"
-          echo "${{ steps.capture_commit_message.outputs.class_names }}"
-          sf project deploy start \
-            --target-org "${{ secrets.DEPLOYMENT_USER_NAME }}" \
-            --ignore-conflicts
       - name: Authenticate to Salesforce (JWT)
         run: |
           sf org login jwt \
@@ -91,14 +62,32 @@ jobs:
           SF_INSTANCE_URL: ${{ secrets.INSTANCE_URL }}
           COMMIT_MESSAGE: ${{ steps.capture_commit_message.outputs.commit_message }}
           COMMIT_HASH: ${{ github.sha }}
-          CHANGED_CLASSES: ${{ steps.capture_classes.outputs.changed_classes }}
+          GIT_BEFORE: ${{ github.event.before }}
+          GIT_AFTER: ${{ github.sha }}
         run: |
-          # Get a fresh token inside this step — never written to GITHUB_OUTPUT so it won't be masked
+          # Get a fresh token — kept as local var so Actions never masks it
           SF_ACCESS_TOKEN="$(sf org display --target-org ${{ secrets.DEPLOYMENT_USER_NAME }} --json | jq -r '.result.accessToken')"
 
           if [ -z "$SF_ACCESS_TOKEN" ] || [ "$SF_ACCESS_TOKEN" = "null" ]; then
-            echo "ERROR: SF_ACCESS_TOKEN is empty — auth step may have failed"
+            echo "ERROR: SF_ACCESS_TOKEN is empty"
             exit 1
+          fi
+
+          # Rebuild changed classes list fresh here — avoids multiline output passing issues
+          COMMIT_RANGE="${GIT_BEFORE}..${GIT_AFTER}"
+          if [ "$GIT_BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            COMMIT_RANGE="$GIT_AFTER"
+          fi
+
+          CHANGED_FILES="$(git diff --name-only "$COMMIT_RANGE" \
+            -- 'force-app/main/default/classes/*.cls' 2>/dev/null || true)"
+
+          CHANGED_CLASSES="[]"
+          if [ -n "$CHANGED_FILES" ]; then
+            CHANGED_CLASSES="$(echo "$CHANGED_FILES" | while IFS= read -r FILE; do
+              [ -z "$FILE" ] && continue
+              echo "$FILE"
+            done | jq -R '{name: (. | split("/") | last | split(".cls") | first), path: .}' | jq -s '.')"
           fi
 
           echo "Instance URL: $SF_INSTANCE_URL"
@@ -134,7 +123,6 @@ jobs:
               }'
             )"
 
-            # Query for existing record
             SOQL="SELECT Id FROM CommitClass__c WHERE Class_Name__c = '${CLASS_NAME}' AND Commit_Hash__c = '${COMMIT_HASH}' LIMIT 1"
             HTTP_CODE="$(curl -s -o /tmp/sf_query.json -w "%{http_code}" -G \
               --data-urlencode "q=${SOQL}" \
