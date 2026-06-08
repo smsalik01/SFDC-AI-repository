@@ -50,11 +50,11 @@ jobs:
 
       - name: Deploy to Salesforce
         run: |
-          echo "Apex class commit message:"
-          echo "${{ steps.capture_commit_message.outputs.commit_message }}"
-          sf project deploy start \
-            --target-org ${{ secrets.DEPLOYMENT_USER_NAME }} \
-            --ignore-conflicts
+          # echo "Apex class commit message:"
+          # echo "${{ steps.capture_commit_message.outputs.commit_message }}"
+          # sf project deploy start \
+          #   --target-org ${{ secrets.DEPLOYMENT_USER_NAME }} \
+          #   --ignore-conflicts
 
       - name: Create CommitClass__c records in Salesforce
         shell: bash
