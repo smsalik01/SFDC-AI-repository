@@ -115,10 +115,10 @@ jobs:
                 --values "Class_Name__c='${CLASS_NAME}' File_Path__c='${FILE_PATH}' Last_Commit_Message__c='${COMMIT_MESSAGE}' Commit_Hash__c='${COMMIT_HASH}'"
             else
               echo "  Creating new record"
-              sf data create record \
+             sf data create record \
                 --target-org "$DEPLOYMENT_USER" \
                 --sobject CommitClass__c \
-                --values "Name='${CLASS_NAME}' Class_Name__c='${CLASS_NAME}' File_Path__c='${FILE_PATH}' Last_Commit_Message__c='${COMMIT_MESSAGE}' Commit_Hash__c='${COMMIT_HASH}'"
+                --values "Class_Name__c='${CLASS_NAME}' File_Path__c='${FILE_PATH}' Last_Commit_Message__c='${COMMIT_MESSAGE}' Commit_Hash__c='${COMMIT_HASH}'"
             fi
 
             echo "  ✓ Done: $CLASS_NAME"
