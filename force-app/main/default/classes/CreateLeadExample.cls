@@ -5,10 +5,10 @@ public class CreateLeadExample {
 
         // Create a new Lead sObject
         Lead newLead = new Lead(
-            FirstName = 'Phil19',
-            LastName  = 'Kurt19',
-            Company   = 'Kurt19 Industries',
-            Email     = 'Kurt19.sh@abc.com',
+            FirstName = 'Phil20',
+            LastName  = 'Kurt20',
+            Company   = 'Kurt20 Industries',
+            Email     = 'Kurt20.sh@abc.com',
             Phone     = '123-124-5555',
             Status    = 'Open - Not Contacted'
         );
