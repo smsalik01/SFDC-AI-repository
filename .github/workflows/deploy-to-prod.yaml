@@ -50,49 +50,49 @@ jobs:
 
       - name: Deploy to Salesforce
         run: |
-          # echo "Apex class commit message:"
-          # echo "${{ steps.capture_commit_message.outputs.commit_message }}"
-          # sf project deploy start \
-          #   --target-org ${{ secrets.DEPLOYMENT_USER_NAME }} \
-          #   --ignore-conflicts
+          echo "Apex class commit message:"
+          echo "${{ steps.capture_commit_message.outputs.commit_message }}"
+          sf project deploy start \
+            --target-org ${{ secrets.DEPLOYMENT_USER_NAME }} \
+            --ignore-conflicts
 
-      # - name: Create CommitClass__c records in Salesforce
-#        shell: bash
-#        env:
-#          COMMIT_MESSAGE: ${{ steps.capture_commit_message.outputs.commit_message }}
-#          COMMIT_HASH: ${{ github.sha }}
-#          GIT_BEFORE: ${{ github.event.before }}
-#          GIT_AFTER: ${{ github.sha }}
-#          DEPLOYMENT_USER: ${{ secrets.DEPLOYMENT_USER_NAME }}
-#        run: |
-#          echo "Commit hash:  $COMMIT_HASH"
-#
-#          # Rebuild changed classes list fresh
-#          COMMIT_RANGE="${GIT_BEFORE}..${GIT_AFTER}"
-#          if [ "$GIT_BEFORE" = "0000000000000000000000000000000000000000" ]; then
-#            COMMIT_RANGE="$GIT_AFTER"
-#          fi
-#
-#          CHANGED_FILES="$(git diff --name-only "$COMMIT_RANGE" \
-#            -- 'force-app/main/default/classes/*.cls' 2>/dev/null || true)"
-#
-#          CHANGED_CLASSES="[]"
-#          if [ -n "$CHANGED_FILES" ]; then
-#            CHANGED_CLASSES="$(echo "$CHANGED_FILES" | while IFS= read -r FILE; do
-#              [ -z "$FILE" ] && continue
-#              echo "$FILE"
-#            done | jq -R '{name: (. | split("/") | last | split(".cls") | first), path: .}' | jq -s '.')"
-#          fi
-#
-#          echo "Changed classes: $CHANGED_CLASSES"
-#
-#          CLASS_COUNT="$(echo "$CHANGED_CLASSES" | jq 'length')"
-#          if [ "$CLASS_COUNT" -eq 0 ]; then
-#            echo "No Apex classes changed — skipping CommitClass__c upsert."
-#            exit 0
-#          fi
-#
-#          echo "Upserting $CLASS_COUNT CommitClass__c record(s)..."
+      - name: Create CommitClass__c records in Salesforce
+        shell: bash
+        env:
+          COMMIT_MESSAGE: ${{ steps.capture_commit_message.outputs.commit_message }}
+          COMMIT_HASH: ${{ github.sha }}
+          GIT_BEFORE: ${{ github.event.before }}
+          GIT_AFTER: ${{ github.sha }}
+          DEPLOYMENT_USER: ${{ secrets.DEPLOYMENT_USER_NAME }}
+        run: |
+          echo "Commit hash:  $COMMIT_HASH"
+
+          # Rebuild changed classes list fresh
+          COMMIT_RANGE="${GIT_BEFORE}..${GIT_AFTER}"
+          if [ "$GIT_BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            COMMIT_RANGE="$GIT_AFTER"
+          fi
+
+          CHANGED_FILES="$(git diff --name-only "$COMMIT_RANGE" \
+            -- 'force-app/main/default/classes/*.cls' 2>/dev/null || true)"
+
+          CHANGED_CLASSES="[]"
+          if [ -n "$CHANGED_FILES" ]; then
+            CHANGED_CLASSES="$(echo "$CHANGED_FILES" | while IFS= read -r FILE; do
+              [ -z "$FILE" ] && continue
+              echo "$FILE"
+            done | jq -R '{name: (. | split("/") | last | split(".cls") | first), path: .}' | jq -s '.')"
+          fi
+
+          echo "Changed classes: $CHANGED_CLASSES"
+
+          CLASS_COUNT="$(echo "$CHANGED_CLASSES" | jq 'length')"
+          if [ "$CLASS_COUNT" -eq 0 ]; then
+            echo "No Apex classes changed — skipping CommitClass__c upsert."
+            exit 0
+          fi
+
+          echo "Upserting $CLASS_COUNT CommitClass__c record(s)..."
 #
 #          for i in $(seq 0 $((CLASS_COUNT - 1))); do
 #            CLASS_NAME="$(echo "$CHANGED_CLASSES" | jq -r ".[$i].name")"
