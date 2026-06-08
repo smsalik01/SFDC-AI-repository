@@ -65,21 +65,6 @@ jobs:
           GIT_AFTER: ${{ github.sha }}
           DEPLOYMENT_USER: ${{ secrets.DEPLOYMENT_USER_NAME }}
         run: |
-          # Get token AND instance URL from sf cli — both stay as local vars, never masked
-          SF_ORG_JSON="$(sf org display --target-org "$DEPLOYMENT_USER" --json)"
-          SF_ACCESS_TOKEN="$(echo "$SF_ORG_JSON" | jq -r '.result.accessToken')"
-          SF_INSTANCE_URL="$(echo "$SF_ORG_JSON" | jq -r '.result.instanceUrl')"
-
-          if [ -z "$SF_ACCESS_TOKEN" ] || [ "$SF_ACCESS_TOKEN" = "null" ]; then
-            echo "ERROR: SF_ACCESS_TOKEN is empty"
-            exit 1
-          fi
-          if [ -z "$SF_INSTANCE_URL" ] || [ "$SF_INSTANCE_URL" = "null" ]; then
-            echo "ERROR: SF_INSTANCE_URL is empty"
-            exit 1
-          fi
-
-          echo "Instance URL: $SF_INSTANCE_URL"
           echo "Commit hash:  $COMMIT_HASH"
 
           # Rebuild changed classes list fresh
@@ -115,59 +100,25 @@ jobs:
 
             echo "  Processing: $CLASS_NAME @ $FILE_PATH"
 
-            PAYLOAD="$(jq -n \
-              --arg name "$CLASS_NAME" \
-              --arg cls  "$CLASS_NAME" \
-              --arg path "$FILE_PATH" \
-              --arg msg  "$COMMIT_MESSAGE" \
-              --arg hash "$COMMIT_HASH" \
-              '{
-                Name:                   $name,
-                Class_Name__c:          $cls,
-                File_Path__c:           $path,
-                Last_Commit_Message__c: $msg,
-                Commit_Hash__c:         $hash
-              }'
-            )"
-
-            SOQL="SELECT Id FROM CommitClass__c WHERE Class_Name__c = '${CLASS_NAME}' AND Commit_Hash__c = '${COMMIT_HASH}' LIMIT 1"
-            HTTP_CODE="$(curl -s -o /tmp/sf_query.json -w "%{http_code}" -G \
-              --data-urlencode "q=${SOQL}" \
-              -H "Authorization: Bearer ${SF_ACCESS_TOKEN}" \
-              "${SF_INSTANCE_URL}/services/data/v62.0/query/")"
-
-            echo "  Query HTTP status: $HTTP_CODE"
-            cat /tmp/sf_query.json
-
-            if [ "$HTTP_CODE" -ge 400 ]; then
-              echo "  ERROR: Query failed"
-              exit 1
-            fi
-
-            EXISTING="$(jq -r '.records[0].Id // empty' /tmp/sf_query.json)"
+            # Query using sf data query — no curl, no token/URL needed
+            EXISTING="$(sf data query \
+              --target-org "$DEPLOYMENT_USER" \
+              --query "SELECT Id FROM CommitClass__c WHERE Class_Name__c = '${CLASS_NAME}' AND Commit_Hash__c = '${COMMIT_HASH}' LIMIT 1" \
+              --json 2>/dev/null | jq -r '.result.records[0].Id // empty')"
 
             if [ -n "$EXISTING" ]; then
-              echo "  PATCH existing record $EXISTING"
-              HTTP_CODE="$(curl -s -o /tmp/sf_upsert.json -w "%{http_code}" -X PATCH \
-                -H "Authorization: Bearer ${SF_ACCESS_TOKEN}" \
-                -H "Content-Type: application/json" \
-                -d "$PAYLOAD" \
-                "${SF_INSTANCE_URL}/services/data/v62.0/sobjects/CommitClass__c/${EXISTING}")"
+              echo "  Updating existing record $EXISTING"
+              sf data update record \
+                --target-org "$DEPLOYMENT_USER" \
+                --sobject CommitClass__c \
+                --record-id "$EXISTING" \
+                --values "Class_Name__c='${CLASS_NAME}' File_Path__c='${FILE_PATH}' Last_Commit_Message__c='${COMMIT_MESSAGE}' Commit_Hash__c='${COMMIT_HASH}'"
             else
-              echo "  POST new record"
-              HTTP_CODE="$(curl -s -o /tmp/sf_upsert.json -w "%{http_code}" -X POST \
-                -H "Authorization: Bearer ${SF_ACCESS_TOKEN}" \
-                -H "Content-Type: application/json" \
-                -d "$PAYLOAD" \
-                "${SF_INSTANCE_URL}/services/data/v62.0/sobjects/CommitClass__c")"
-            fi
-
-            echo "  Upsert HTTP status: $HTTP_CODE"
-            cat /tmp/sf_upsert.json
-
-            if [ "$HTTP_CODE" -ge 400 ]; then
-              echo "  ERROR: Upsert failed for $CLASS_NAME"
-              exit 1
+              echo "  Creating new record"
+              sf data create record \
+                --target-org "$DEPLOYMENT_USER" \
+                --sobject CommitClass__c \
+                --values "Name='${CLASS_NAME}' Class_Name__c='${CLASS_NAME}' File_Path__c='${FILE_PATH}' Last_Commit_Message__c='${COMMIT_MESSAGE}' Commit_Hash__c='${COMMIT_HASH}'"
             fi
 
             echo "  ✓ Done: $CLASS_NAME"
