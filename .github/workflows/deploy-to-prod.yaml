@@ -59,21 +59,30 @@ jobs:
       - name: Create CommitClass__c records in Salesforce
         shell: bash
         env:
-          SF_INSTANCE_URL: ${{ secrets.INSTANCE_URL }}
           COMMIT_MESSAGE: ${{ steps.capture_commit_message.outputs.commit_message }}
           COMMIT_HASH: ${{ github.sha }}
           GIT_BEFORE: ${{ github.event.before }}
           GIT_AFTER: ${{ github.sha }}
+          DEPLOYMENT_USER: ${{ secrets.DEPLOYMENT_USER_NAME }}
         run: |
-          # Get a fresh token — kept as local var so Actions never masks it
-          SF_ACCESS_TOKEN="$(sf org display --target-org ${{ secrets.DEPLOYMENT_USER_NAME }} --json | jq -r '.result.accessToken')"
+          # Get token AND instance URL from sf cli — both stay as local vars, never masked
+          SF_ORG_JSON="$(sf org display --target-org "$DEPLOYMENT_USER" --json)"
+          SF_ACCESS_TOKEN="$(echo "$SF_ORG_JSON" | jq -r '.result.accessToken')"
+          SF_INSTANCE_URL="$(echo "$SF_ORG_JSON" | jq -r '.result.instanceUrl')"
 
           if [ -z "$SF_ACCESS_TOKEN" ] || [ "$SF_ACCESS_TOKEN" = "null" ]; then
             echo "ERROR: SF_ACCESS_TOKEN is empty"
             exit 1
           fi
+          if [ -z "$SF_INSTANCE_URL" ] || [ "$SF_INSTANCE_URL" = "null" ]; then
+            echo "ERROR: SF_INSTANCE_URL is empty"
+            exit 1
+          fi
 
-          # Rebuild changed classes list fresh here — avoids multiline output passing issues
+          echo "Instance URL: $SF_INSTANCE_URL"
+          echo "Commit hash:  $COMMIT_HASH"
+
+          # Rebuild changed classes list fresh
           COMMIT_RANGE="${GIT_BEFORE}..${GIT_AFTER}"
           if [ "$GIT_BEFORE" = "0000000000000000000000000000000000000000" ]; then
             COMMIT_RANGE="$GIT_AFTER"
@@ -90,8 +99,6 @@ jobs:
             done | jq -R '{name: (. | split("/") | last | split(".cls") | first), path: .}' | jq -s '.')"
           fi
 
-          echo "Instance URL: $SF_INSTANCE_URL"
-          echo "Commit hash:  $COMMIT_HASH"
           echo "Changed classes: $CHANGED_CLASSES"
 
           CLASS_COUNT="$(echo "$CHANGED_CLASSES" | jq 'length')"
