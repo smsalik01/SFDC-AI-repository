@@ -56,72 +56,72 @@ jobs:
           #   --target-org ${{ secrets.DEPLOYMENT_USER_NAME }} \
           #   --ignore-conflicts
 
-      - name: Create CommitClass__c records in Salesforce
-        shell: bash
-        env:
-          COMMIT_MESSAGE: ${{ steps.capture_commit_message.outputs.commit_message }}
-          COMMIT_HASH: ${{ github.sha }}
-          GIT_BEFORE: ${{ github.event.before }}
-          GIT_AFTER: ${{ github.sha }}
-          DEPLOYMENT_USER: ${{ secrets.DEPLOYMENT_USER_NAME }}
-        run: |
-          echo "Commit hash:  $COMMIT_HASH"
-
-          # Rebuild changed classes list fresh
-          COMMIT_RANGE="${GIT_BEFORE}..${GIT_AFTER}"
-          if [ "$GIT_BEFORE" = "0000000000000000000000000000000000000000" ]; then
-            COMMIT_RANGE="$GIT_AFTER"
-          fi
-
-          CHANGED_FILES="$(git diff --name-only "$COMMIT_RANGE" \
-            -- 'force-app/main/default/classes/*.cls' 2>/dev/null || true)"
-
-          CHANGED_CLASSES="[]"
-          if [ -n "$CHANGED_FILES" ]; then
-            CHANGED_CLASSES="$(echo "$CHANGED_FILES" | while IFS= read -r FILE; do
-              [ -z "$FILE" ] && continue
-              echo "$FILE"
-            done | jq -R '{name: (. | split("/") | last | split(".cls") | first), path: .}' | jq -s '.')"
-          fi
-
-          echo "Changed classes: $CHANGED_CLASSES"
-
-          CLASS_COUNT="$(echo "$CHANGED_CLASSES" | jq 'length')"
-          if [ "$CLASS_COUNT" -eq 0 ]; then
-            echo "No Apex classes changed — skipping CommitClass__c upsert."
-            exit 0
-          fi
-
-          echo "Upserting $CLASS_COUNT CommitClass__c record(s)..."
-
-          for i in $(seq 0 $((CLASS_COUNT - 1))); do
-            CLASS_NAME="$(echo "$CHANGED_CLASSES" | jq -r ".[$i].name")"
-            FILE_PATH="$(echo "$CHANGED_CLASSES"  | jq -r ".[$i].path")"
-
-            echo "  Processing: $CLASS_NAME @ $FILE_PATH"
-
-            # Query using sf data query — no curl, no token/URL needed
-            EXISTING="$(sf data query \
-              --target-org "$DEPLOYMENT_USER" \
-              --query "SELECT Id FROM CommitClass__c WHERE Class_Name__c = '${CLASS_NAME}' AND Commit_Hash__c = '${COMMIT_HASH}' LIMIT 1" \
-              --json 2>/dev/null | jq -r '.result.records[0].Id // empty')"
-
-            if [ -n "$EXISTING" ]; then
-              echo "  Updating existing record $EXISTING"
-              sf data update record \
-                --target-org "$DEPLOYMENT_USER" \
-                --sobject CommitClass__c \
-                --record-id "$EXISTING" \
-                --values "Class_Name__c='${CLASS_NAME}' File_Path__c='${FILE_PATH}' Last_Commit_Message__c='${COMMIT_MESSAGE}' Commit_Hash__c='${COMMIT_HASH}'"
-            else
-              echo "  Creating new record"
-             sf data create record \
-                --target-org "$DEPLOYMENT_USER" \
-                --sobject CommitClass__c \
-                --values "Class_Name__c='${CLASS_NAME}' File_Path__c='${FILE_PATH}' Last_Commit_Message__c='${COMMIT_MESSAGE}' Commit_Hash__c='${COMMIT_HASH}'"
-            fi
-
-            echo "  ✓ Done: $CLASS_NAME"
-          done
-
-          echo "Done — all CommitClass__c records upserted."
+      # - name: Create CommitClass__c records in Salesforce
+#        shell: bash
+#        env:
+#          COMMIT_MESSAGE: ${{ steps.capture_commit_message.outputs.commit_message }}
+#          COMMIT_HASH: ${{ github.sha }}
+#          GIT_BEFORE: ${{ github.event.before }}
+#          GIT_AFTER: ${{ github.sha }}
+#          DEPLOYMENT_USER: ${{ secrets.DEPLOYMENT_USER_NAME }}
+#        run: |
+#          echo "Commit hash:  $COMMIT_HASH"
+#
+#          # Rebuild changed classes list fresh
+#          COMMIT_RANGE="${GIT_BEFORE}..${GIT_AFTER}"
+#          if [ "$GIT_BEFORE" = "0000000000000000000000000000000000000000" ]; then
+#            COMMIT_RANGE="$GIT_AFTER"
+#          fi
+#
+#          CHANGED_FILES="$(git diff --name-only "$COMMIT_RANGE" \
+#            -- 'force-app/main/default/classes/*.cls' 2>/dev/null || true)"
+#
+#          CHANGED_CLASSES="[]"
+#          if [ -n "$CHANGED_FILES" ]; then
+#            CHANGED_CLASSES="$(echo "$CHANGED_FILES" | while IFS= read -r FILE; do
+#              [ -z "$FILE" ] && continue
+#              echo "$FILE"
+#            done | jq -R '{name: (. | split("/") | last | split(".cls") | first), path: .}' | jq -s '.')"
+#          fi
+#
+#          echo "Changed classes: $CHANGED_CLASSES"
+#
+#          CLASS_COUNT="$(echo "$CHANGED_CLASSES" | jq 'length')"
+#          if [ "$CLASS_COUNT" -eq 0 ]; then
+#            echo "No Apex classes changed — skipping CommitClass__c upsert."
+#            exit 0
+#          fi
+#
+#          echo "Upserting $CLASS_COUNT CommitClass__c record(s)..."
+#
+#          for i in $(seq 0 $((CLASS_COUNT - 1))); do
+#            CLASS_NAME="$(echo "$CHANGED_CLASSES" | jq -r ".[$i].name")"
+#            FILE_PATH="$(echo "$CHANGED_CLASSES"  | jq -r ".[$i].path")"
+#
+#            echo "  Processing: $CLASS_NAME @ $FILE_PATH"
+#
+#            # Query using sf data query — no curl, no token/URL needed
+#            EXISTING="$(sf data query \
+#              --target-org "$DEPLOYMENT_USER" \
+#              --query "SELECT Id FROM CommitClass__c WHERE Class_Name__c = '${CLASS_NAME}' AND Commit_Hash__c = '${COMMIT_HASH}' LIMIT 1" \
+#              --json 2>/dev/null | jq -r '.result.records[0].Id // empty')"
+#
+#            if [ -n "$EXISTING" ]; then
+#              echo "  Updating existing record $EXISTING"
+#              sf data update record \
+#                --target-org "$DEPLOYMENT_USER" \
+#                --sobject CommitClass__c \
+#                --record-id "$EXISTING" \
+#                --values "Class_Name__c='${CLASS_NAME}' File_Path__c='${FILE_PATH}' Last_Commit_Message__c='${COMMIT_MESSAGE}' Commit_Hash__c='${COMMIT_HASH}'"
+#            else
+#              echo "  Creating new record"
+#             sf data create record \
+#                --target-org "$DEPLOYMENT_USER" \
+#                --sobject CommitClass__c \
+#                --values "Class_Name__c='${CLASS_NAME}' File_Path__c='${FILE_PATH}' Last_Commit_Message__c='${COMMIT_MESSAGE}' Commit_Hash__c='${COMMIT_HASH}'"
+#            fi
+#
+#            echo "  ✓ Done: $CLASS_NAME"
+#          done
+#
+#          echo "Done — all CommitClass__c records upserted."
